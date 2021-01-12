@@ -1,0 +1,7 @@
+venv
+__pychache__/
+
+wordspotting/GT
+wordspotting/pages
+wordspotting/papers
+wordspotting/SIFT

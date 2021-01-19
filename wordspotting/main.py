@@ -12,6 +12,8 @@ from scipy.spatial.distance import cdist
 
 from wordspotting.SIFT.compute_sift import compute_sift_descriptors
 
+show_plots = False
+
 
 class Patch:
     top_left = (0, 0)
@@ -73,14 +75,15 @@ def wordspotting(query_word, step_size, cell_size, grid_width, grid_height, thre
     heatmap_threshold = cv2.resize(heatmap_threshold, dsize=(image.width, image.height), interpolation=cv2.INTER_CUBIC)
     heatmap_interpolated = cv2.resize(heatmap_normalized, dsize=(image.width, image.height), interpolation=cv2.INTER_CUBIC)
 
-    #plt.imshow(heatmap_interpolated)
-    #plt.show()
-    #plt.imshow(image)
-    #plt.imshow(heatmap_threshold, alpha=0.5)
-    #plt.show()
-    #plt.imshow(image)
-    #plt.imshow(heatmap_interpolated, alpha=0.5)
-    #plt.show()
+    if show_plots:
+        plt.imshow(heatmap_interpolated)
+        plt.show()
+        plt.imshow(image)
+        plt.imshow(heatmap_threshold, alpha=0.5)
+        plt.show()
+        plt.imshow(image)
+        plt.imshow(heatmap_interpolated, alpha=0.5)
+        plt.show()
 
     patch_width = query_word.shape[1]
     patch_height = query_word.shape[0]

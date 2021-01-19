@@ -3,28 +3,67 @@ import pickle
 import os
 import cv2
 import numpy as np
+import tqdm
 from collections import defaultdict
 
 import PIL.Image as Image
 import matplotlib.pyplot as plt
+from matplotlib.patches import Rectangle
 from scipy.cluster.vq import kmeans2
 from scipy.spatial.distance import cdist
 
 from wordspotting.SIFT.compute_sift import compute_sift_descriptors
 
-show_plots = False
+show_plots = True
 
 
 class Patch:
     top_left = (0, 0)
     bottom_right = (0, 0)
+    score = 0
 
-    def __init__(self, center_x, center_y, width, height):
+    def __init__(self, center_x, center_y, width, height, score):
         delta_x = width / 2.0
         delta_y = height / 2.0
 
         self.top_left = (center_x - delta_x, center_y - delta_y)
         self.bottom_right = (center_x + delta_x, center_y + delta_y)
+        self.score = score
+
+    def area(self):
+        return (self.bottom_right[0] - self.top_left[0]) * (self.bottom_right[1] - self.top_left[1])
+
+    def intersection(self, other):
+        left = max(self.top_left[0], other.top_left[0])
+        right = min(self.bottom_right[0], other.bottom_right[0])
+        top = max(self.top_left[1], other.top_left[1])
+        bottom = min(self.bottom_right[1], other.bottom_right[1])
+        width = (right - left)
+        height = (bottom - top)
+        if width < 0.0 or height < 0.0:
+            # No overlap
+            return 0.0
+        else:
+            return width * height
+
+    def union(self, other):
+        return self.area() + other.area() - self.intersection(other)
+
+    def iou(self, other):
+        return self.intersection(other) / self.union(other)
+
+
+def nms(patches, threshold):
+    patches.sort(key=lambda p: p.score, reverse=True)
+    result = []
+    while patches:
+        best_patch = patches[0]
+        patches.remove(best_patch)
+        result.append(best_patch)
+        tmp = [patch for patch in patches if best_patch.iou(patch) <= threshold]
+        patches = tmp
+
+    return result
 
 
 def inverse_file_structure(frames, labels):
@@ -44,6 +83,22 @@ def gen_heatmap(ifs, image_width, image_height, grid_width, grid_height, query_w
             y_grid = math.floor(y / grid_height)
             map[y_grid, x_grid] += 1
     return map
+
+
+def show_patches(image, patches, heatmap):
+    fig = plt.figure()
+    ax = fig.add_subplot(111)
+    ax.imshow(image, cmap="Greys_r")
+    ax.imshow(heatmap, cmap="Reds", alpha=0.4)
+
+    for patch in patches:
+        lower_left = (patch.top_left[0], patch.bottom_right[1])
+        width = (patch.bottom_right[0] - patch.top_left[0])
+        height = (patch.bottom_right[1] - patch.top_left[1])
+        rect = Rectangle(lower_left, width, -height, alpha=0.5)
+        ax.add_patch(rect)
+
+    plt.show()
 
 
 # query_word is a numpy matrix of the image data
@@ -89,9 +144,28 @@ def wordspotting(query_word, step_size, cell_size, grid_width, grid_height, thre
     patch_height = query_word.shape[0]
     patches = []
 
-    for (x, y), v in np.ndenumerate(heatmap_interpolated):
-        if v > threshold:
-            patches.append(Patch(x, y, patch_width, patch_height))
+    start_x = int(patch_width / 2.0)
+    start_y = int(patch_height / 2.0)
+
+    step_x = int(patch_width / 8.0)
+    step_y = int(patch_height / 8.0)
+
+    for x in range(start_x, im_arr.shape[1], step_x):
+        for y in range(start_y, im_arr.shape[0], step_y):
+            patch = Patch(x, y, patch_width, patch_height, 0.0)
+            average = heatmap_interpolated[int(patch.top_left[1]):int(patch.bottom_right[1]),
+                          int(patch.top_left[0]):int(patch.bottom_right[0])].mean()
+            patch.score = heatmap_interpolated[int(patch.top_left[1]):int(patch.bottom_right[1]),
+                          int(patch.top_left[0]):int(patch.bottom_right[0])].sum()
+            if average > threshold:
+                patches.append(patch)
+
+    print("Patches found")
+
+    nms_patches = nms(patches, 0.1)
+
+    if show_plots:
+        show_patches(im_arr, nms_patches, heatmap_threshold)
 
     print("Done")
 

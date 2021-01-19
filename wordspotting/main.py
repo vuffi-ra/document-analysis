@@ -90,8 +90,8 @@ def wordspotting(query_word, step_size, cell_size, grid_width, grid_height, thre
         if v > threshold:
             patches.append(Patch(x, y, patch_width, patch_height))
 
-
     print("Done")
+
 
 def main():
     step_size = 5

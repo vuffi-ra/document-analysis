@@ -30,6 +30,13 @@ class Patch:
         self.bottom_right = (center_x + delta_x, center_y + delta_y)
         self.score = score
 
+    @staticmethod
+    def from_corners(x_1, y_1, x_2, y_2, score):
+        patch = Patch(0, 0, 0, 0, score)
+        patch.top_left = (x_1, y_1)
+        patch.bottom_right = (x_2, y_2)
+        return patch
+
     def area(self):
         return (self.bottom_right[0] - self.top_left[0]) * (self.bottom_right[1] - self.top_left[1])
 
@@ -102,14 +109,14 @@ def show_patches(image, patches, heatmap):
 
 
 # query_word is a numpy matrix of the image data
-def wordspotting(query_word, step_size, cell_size, grid_width, grid_height, threshold):
+def wordspotting(page, query_word, step_size, cell_size, grid_width, grid_height, threshold):
 
-    document_image_filename = os.path.join(os.path.dirname(__file__), 'pages/2700270.png')
+    document_image_filename = os.path.join(os.path.dirname(__file__), 'pages/%s.png' % page)
     image = Image.open(document_image_filename)
     # Fuer spaeter folgende Verarbeitungsschritte muss das Bild mit float32-Werten vorliegen.
     im_arr = np.asarray(image, dtype='float32')
 
-    pickle_densesift_fn = 'SIFT/2700270-full_dense-%d_sift-%d_descriptors.p' % (step_size, cell_size)
+    pickle_densesift_fn = 'SIFT/%s-full_dense-%d_sift-%d_descriptors.p' % (page, step_size, cell_size)
     frames, descriptors = pickle.load(open(pickle_densesift_fn, 'rb'))
 
     n_centroids = 100
@@ -153,11 +160,11 @@ def wordspotting(query_word, step_size, cell_size, grid_width, grid_height, thre
     for x in range(start_x, im_arr.shape[1], step_x):
         for y in range(start_y, im_arr.shape[0], step_y):
             patch = Patch(x, y, patch_width, patch_height, 0.0)
-            average = heatmap_interpolated[int(patch.top_left[1]):int(patch.bottom_right[1]),
-                          int(patch.top_left[0]):int(patch.bottom_right[0])].mean()
+            hmax = heatmap_interpolated[int(patch.top_left[1]):int(patch.bottom_right[1]),
+                          int(patch.top_left[0]):int(patch.bottom_right[0])].max()
             patch.score = heatmap_interpolated[int(patch.top_left[1]):int(patch.bottom_right[1]),
                           int(patch.top_left[0]):int(patch.bottom_right[0])].sum()
-            if average > threshold:
+            if hmax > threshold:
                 patches.append(patch)
 
     print("Patches found")
@@ -168,19 +175,75 @@ def wordspotting(query_word, step_size, cell_size, grid_width, grid_height, thre
         show_patches(im_arr, nms_patches, heatmap_threshold)
 
     print("Done")
+    return nms_patches
+
+
+def find_relevant_patches(patches, gt):
+    relevancy_list = []
+    for patch in patches:
+        relevant = False
+        for truth in gt:
+            if patch.iou(truth) >= 0.5:
+                relevant = True
+
+        relevancy_list.append(1 if relevant else 0)
+
+    return relevancy_list
+
+
+def analyze(patches, gt):
+    if not patches or not gt:
+        return 0.0, 0.0, 0.0
+    relevancy_list = find_relevant_patches(patches, gt)
+    precisions = []
+    for i in range(1, len(relevancy_list) + 1):
+        precisions.append(sum(relevancy_list[0:i]) / i)
+
+    precision = precisions[-1]
+    recall = sum(relevancy_list) / len(gt)
+    average_precision = 0
+    for i in range(len(precisions)):
+        average_precision += precisions[i] if relevancy_list[i] else 0.0
+    average_precision /= len(gt)
+
+    return precision, recall, average_precision
+
+
+def read_groundtruth(page):
+    gt_file = os.path.join(os.path.dirname(__file__), 'GT/%s.gtp' % page)
+    result = defaultdict(list)
+
+    with open(gt_file, 'r') as f:
+        for line in f:
+            parts = line.split(' ')
+            x_1 = int(parts[0])
+            y_1 = int(parts[1])
+            x_2 = int(parts[2])
+            y_2 = int(parts[3])
+            word = parts[4].strip()
+            result[word].append(Patch.from_corners(x_1, y_1, x_2, y_2, 0.0))
+
+    return result
 
 
 def main():
+    page = "2700270"
     step_size = 5
     cell_size = 15
 
     grid_height = 100
     grid_width = 100
 
-    threshold = 0.75
+    threshold = 0.8
 
     input = cv2.imread("inputs/the.png")
-    wordspotting(input, step_size, cell_size, grid_width, grid_height, threshold)
+    patches = wordspotting(page, input, step_size, cell_size, grid_width, grid_height, threshold)
+    gt = read_groundtruth(page)
+
+    precision, recall, average_precision = analyze(patches, gt["the"])
+    print("Precision: ", precision)
+    print("Recall: ", recall)
+    print("Average Precision: ", average_precision)
 
 
 if __name__ == '__main__':

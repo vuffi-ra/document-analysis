@@ -1,7 +1,10 @@
+from __future__ import annotations
+
 import math
 import pickle
 import os
 from collections import defaultdict
+from typing import List, Tuple, Dict
 
 import cv2
 import numpy as np
@@ -13,56 +16,58 @@ from scipy.spatial.distance import cdist
 
 from wordspotting.SIFT.compute_sift import compute_sift_descriptors
 
+Coords = List[Tuple[int, int]]
+
 
 class WordspottingSettings:
     """Sift Step Size. Number of pixels between two SIFT descriptors."""
-    sift_step_size = 5
+    sift_step_size: int = 5
     """Sift Cell Size. Width and height in pixels of a SIFT descriptor cell. Each descriptor is 4x4 cells large."""
-    sift_cell_size = 15
+    sift_cell_size: int = 15
     """Width of a heatmap cell."""
-    heatmap_grid_width = 100
+    heatmap_grid_width: int = 100
     """Height of a heatmap cell."""
-    heatmap_grid_height = 100
+    heatmap_grid_height: int = 100
     """Heatmap threshold. 
-    Only patches that contain at least one pixel with a value above the threshold are considered.
+    Only patches that contain at least one pixel with a value above the threshold are considered. [0, 1]
     """
-    patch_threshold = 0.75
+    patch_threshold: float = 0.75
     """Number of entries in the visual dictionary. Equivalent to number of centroids in Lloyd's Algorithm"""
-    dictionary_size = 100
+    dictionary_size: int = 100
     """Number of iterations for LLoyd's Algorithm"""
-    lloyd_iterations = 20
-    """Non-Maximum-Supression Threshold. NMS will remove all patches that overlap more than this threshold"""
-    nms_threshold = 0.1
+    lloyd_iterations: int = 20
+    """Non-Maximum-Supression Threshold. NMS will remove all patches that overlap more than this threshold. [0, 1]"""
+    nms_threshold: float = 0.1
     """Determines how the heatmap is interpolated to the image resolution"""
     heatmap_interpolation_method = cv2.INTER_CUBIC
     """Should plots be shown while calculating patches"""
-    show_plots = True
+    show_plots: bool = True
 
 
 class Patch:
-    top_left = (0, 0)
-    bottom_right = (0, 0)
-    score = 0
+    top_left: Tuple[int, int] = (0, 0)
+    bottom_right: Tuple[int, int] = (0, 0)
+    score: float = 0
 
-    def __init__(self, center_x, center_y, width, height, score):
+    def __init__(self, center_x: int, center_y: int, width: int, height: int, score: float):
         delta_x = width / 2.0
         delta_y = height / 2.0
 
-        self.top_left = (center_x - delta_x, center_y - delta_y)
-        self.bottom_right = (center_x + delta_x, center_y + delta_y)
+        self.top_left = (int(center_x - delta_x), int(center_y - delta_y))
+        self.bottom_right = (int(center_x + delta_x), int(center_y + delta_y))
         self.score = score
 
     @staticmethod
-    def from_corners(x_1, y_1, x_2, y_2, score):
+    def from_corners(x_1: int, y_1: int, x_2: int, y_2: int, score: float) -> Patch:
         patch = Patch(0, 0, 0, 0, score)
         patch.top_left = (x_1, y_1)
         patch.bottom_right = (x_2, y_2)
         return patch
 
-    def area(self):
+    def area(self) -> float:
         return (self.bottom_right[0] - self.top_left[0]) * (self.bottom_right[1] - self.top_left[1])
 
-    def intersection(self, other):
+    def intersection(self, other: Patch) -> float:
         left = max(self.top_left[0], other.top_left[0])
         right = min(self.bottom_right[0], other.bottom_right[0])
         top = max(self.top_left[1], other.top_left[1])
@@ -75,14 +80,14 @@ class Patch:
         else:
             return width * height
 
-    def union(self, other):
+    def union(self, other: Patch) -> float:
         return self.area() + other.area() - self.intersection(other)
 
-    def iou(self, other):
+    def iou(self, other: Patch) -> float:
         return self.intersection(other) / self.union(other)
 
 
-def nms(patches, threshold):
+def nms(patches: List[Patch], threshold: float) -> List[Patch]:
     patches.sort(key=lambda p: p.score, reverse=True)
     result = []
     while patches:
@@ -95,7 +100,7 @@ def nms(patches, threshold):
     return result
 
 
-def inverse_file_structure(frames, labels):
+def inverse_file_structure(frames: Coords, labels) -> Dict[int, Coords]:
     ifs = defaultdict(list)
 
     for coord, label in zip(frames, labels):
@@ -104,7 +109,8 @@ def inverse_file_structure(frames, labels):
     return ifs
 
 
-def gen_heatmap(ifs, image_width, image_height, grid_width, grid_height, query_words):
+def gen_heatmap(ifs: Dict[int, Coords], image_width: int, image_height: int, grid_width: int, grid_height: int,
+                query_words):
     hmap = np.zeros((math.ceil(image_height / grid_height), math.ceil(image_width / grid_width)))
     for word in query_words:
         for (x, y) in ifs[word]:
@@ -117,7 +123,7 @@ def gen_heatmap(ifs, image_width, image_height, grid_width, grid_height, query_w
 
 
 # query_word is a numpy matrix of the image data
-def wordspotting(page, query_word, settings: WordspottingSettings):
+def wordspotting(page: str, query_patch, settings: WordspottingSettings):
     document_image_filename = os.path.join(os.path.dirname(__file__), 'pages/%s.png' % page)
     image = Image.open(document_image_filename)
     # Fuer spaeter folgende Verarbeitungsschritte muss das Bild mit float32-Werten vorliegen.
@@ -132,18 +138,26 @@ def wordspotting(page, query_word, settings: WordspottingSettings):
 
     ifs = inverse_file_structure(frames, labels)
 
-    query_frames, query_desc = compute_sift_descriptors(query_word, settings.sift_cell_size, settings.sift_step_size)
+    query_frames = []
+    query_desc = []
+    # query_frames, query_desc = compute_sift_descriptors(query_word, settings.sift_cell_size, settings.sift_step_size)
+    # NOTE: We walk over all descriptors here. We could instead calculate which descriptors lie in the query_patch
+    for ((x, y), descriptor) in zip(frames, descriptors):
+        if query_patch.top_left[0] <= x <= query_patch.bottom_right[0] and query_patch.top_left[1] <= y <= \
+                query_patch.bottom_right[1]:
+            query_frames.append((x, y))
+            query_desc.append(descriptor)
 
     # noinspection PyUnresolvedReferences
-    query_words = np.argmin(cdist(visual_words, query_desc), axis=0)
+    query_words = np.argmin(cdist(visual_words, np.array(query_desc)), axis=0)
 
     heatmap = gen_heatmap(ifs, im_arr.shape[1], im_arr.shape[0], settings.heatmap_grid_width,
                           settings.heatmap_grid_height, query_words)
     heatmap = cv2.resize(heatmap, dsize=(image.width, image.height),
                          interpolation=settings.heatmap_interpolation_method)
 
-    patch_width = query_word.shape[1]
-    patch_height = query_word.shape[0]
+    patch_width = query_patch.bottom_right[0] - query_patch.top_left[0]
+    patch_height = query_patch.bottom_right[1] - query_patch.top_left[1]
     patches = []
 
     start_x = int(patch_width / 2.0)
@@ -156,15 +170,17 @@ def wordspotting(page, query_word, settings: WordspottingSettings):
         for y in range(start_y, im_arr.shape[0], step_y):
             patch = Patch(x, y, patch_width, patch_height, 0.0)
             hmax = heatmap[int(patch.top_left[1]):int(patch.bottom_right[1]),
-                           int(patch.top_left[0]):int(patch.bottom_right[0])].max()
+                   int(patch.top_left[0]):int(patch.bottom_right[0])].max()
             patch.score = heatmap[int(patch.top_left[1]):int(patch.bottom_right[1]),
-                                  int(patch.top_left[0]):int(patch.bottom_right[0])].sum()
+                          int(patch.top_left[0]):int(patch.bottom_right[0])].sum()
             if hmax > settings.patch_threshold:
                 patches.append(patch)
 
     nms_patches = nms(patches, settings.nms_threshold)
 
     if settings.show_plots:
+        plt.imshow(im_arr[query_patch.top_left[1]:query_patch.bottom_right[1], query_patch.top_left[0]:query_patch.bottom_right[0]], cmap="Greys_r")
+        plt.show()
         fig = plt.figure()
         heatmap_plot = fig.add_subplot(1, 3, 1)
         threshold_plot = fig.add_subplot(1, 3, 2)
@@ -195,7 +211,7 @@ def wordspotting(page, query_word, settings: WordspottingSettings):
     return nms_patches
 
 
-def find_relevant_patches(patches, gt):
+def find_relevant_patches(patches: List[Patch], gt: List[Patch]) -> List[int]:
     relevancy_list = []
     for patch in patches:
         relevant = False
@@ -208,7 +224,7 @@ def find_relevant_patches(patches, gt):
     return relevancy_list
 
 
-def analyze(patches, gt):
+def analyze(patches: List[Patch], gt: List[Patch]) -> Tuple[float, float, float]:
     if not patches or not gt:
         return 0.0, 0.0, 0.0
 
@@ -228,7 +244,7 @@ def analyze(patches, gt):
     return precision, recall, average_precision
 
 
-def read_groundtruth(page):
+def read_groundtruth(page: str) -> Dict[str, List[Patch]]:
     gt_file = os.path.join(os.path.dirname(__file__), 'GT/%s.gtp' % page)
     result = defaultdict(list)
 
@@ -247,10 +263,10 @@ def read_groundtruth(page):
 
 def main():
     page = "2700270"
-
-    input_word = cv2.imread("inputs/the.png")
-    patches = wordspotting(page, input_word, WordspottingSettings())
     gt = read_groundtruth(page)
+
+    patch = gt["of"][0]
+    patches = wordspotting(page, patch, WordspottingSettings())
 
     precision, recall, average_precision = analyze(patches, gt["the"])
     print("Precision: ", precision)

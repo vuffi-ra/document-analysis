@@ -14,8 +14,6 @@ from matplotlib.patches import Rectangle
 from scipy.cluster.vq import kmeans2
 from scipy.spatial.distance import cdist
 
-from wordspotting.SIFT.compute_sift import compute_sift_descriptors
-
 Coords = List[Tuple[int, int]]
 
 
